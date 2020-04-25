@@ -1,5 +1,77 @@
 # CHANGELOG
 
+## Version 15
+
+#### 15.1.1
+
+Fixed a bug when loading lazy background images on HiDPI screens, `data-bg-hidpi` was mandatory, not it fallbacks to `data-bg`. #430
+
+#### 15.1.0
+
+Lazy background images just gained support for hiDPI ("retina") screens!
+Place your standard resolution images in the `data-bg` attribute and your hiDPI images in `data-bg-hidpi`.
+Same for `data-bg-multi` and `data-bg-multi-hidpi`.
+
+#### 15.0.0
+
+**Lazy background images gained loaded/error classes and callbacks! 🎉**
+
+**Breaking changes impacting lazy background images!** ⚠ See [UPGRADE.md](UPGRADE.md) to understand **if** you are impacted and **how** to upgrade from previous versions.
+
+-   Lazy loading of **one background image** using the `data-bg` attribute, now manages the `load` and `error` events, so they are applied the classes defined in the `class_loading`/`class_loaded`/`class_error`, and the callbacks defined in `callback_loading`/`callback_loaded`/`callback_error`.
+-   Lazy loading of **multiple background images** is still possible via the `data-bg-multi` attribute. In this case, the `load` and `error` events are not managed. The `class_applied` and `callback_applied` can be used to understand when the multiple background was applied to the element.
+-   Updated background images demos:
+    -   background-images.html -> single background images
+    -   background-images-multi.html -> multiple background images
+-   Added [UPGRADE.md](UPGRADE.md), a guide on how to upgrade from previous versions (from version 12 up)
+
+---
+
+**Love this project? 😍 [Buy me a coffee!](https://ko-fi.com/verlok)**
+
+---
+
+## Version 14
+
+#### 14.0.1
+
+Fixed error TS1036: Statements are not allowed in ambient contexts. Closes #427
+
+#### 14.0.0
+
+🎉 **Major refactoring and performance improvement!**
+🔍 File size stays tiny: only 2.07 KB gZipped
+
+**Settings**
+
+-   `callback_loading` is called when an element started loading
+-   `callback_reveal` is now **⚠ DEPRECATED, use `callback_loading` instead** (it's the same thing, it was just renamed). `callback_reveal` will be removed and will stop working in version 15.
+
+**Instance methods**
+
+-   `update()` method now **also unobserves deleted elements**, instead of just looking for and observing new elements
+-   `destroy()` **destroys better** than it did before, `delete`-ing properties instead of setting their values to `null`
+-   `load()` method (as an instance method) is now **⚠ DEPRECATED, use the static method instead**. If you were using `aLazyLoadInstance.load(element)` you should change it to `LazyLoad.load(element, settings)`.
+
+**Static methods**
+
+-   `load()` was added as a static method. Note that if you need to use custom settings, you need to pass them in the `settings` parameter.
+
+**Instance properties**
+
+-   Added `toLoadCount`. It's the counter of the elements that haven't been lazyloaded yet.
+
+**DOM**
+
+-   Removed the `data-was-processed` attribute, that was added to mark lazy DOM elements as "already managed". If you were manually handling that attribute to obtain some goal, this is a potentially breaking change. You should now refer to the `data-ll-status` instead.
+-   Added the `data-ll-status` attribute, which is now used to mark the status of a lazy DOM element. The values it can take are: `observing` (not loaded yet), `loading` (loading started), `loaded` (load completed), `error` (an error has occured), `native` (similar to `observing`, but managed by native lazy loading).
+
+---
+
+**Love this project? 😍 [Buy me a coffee!](https://ko-fi.com/verlok)**
+
+---
+
 ## Version 13
 
 #### 13.0.1
@@ -224,7 +296,7 @@ SEO! Version 10.x is now as SEO-friendly as version 8.x.
 
 #### 10.10.0
 
-Added a public `load` method to force loading any element.
+Added a public `load` method to lazyload any element.
 
 #### 10.9.0
 
@@ -233,7 +305,7 @@ See the [README](README.md) file for more information.
 
 #### 10.8.0
 
-Added a public `loadAll` method to force loading all the images, as asked in #193.
+Added a public `loadAll` method to loading all the images at once, as asked in #193.
 
 #### 10.7.0
 
@@ -376,7 +448,7 @@ SEO! Expanded SEO-friendliness to more crawlers, Bingbot included.
 
 #### 8.11.0
 
-Added a public `load` method to force loading any element.
+Added a public `load` method to lazyload any element.
 
 #### 8.10.0
 
@@ -385,7 +457,7 @@ See the [README](README.md) file for more information.
 
 #### 8.9.0
 
-Added a public `loadAll` method to force loading all the images, as asked in #193.
+Added a public `loadAll` method to load all the images, as asked in #193.
 
 #### 8.8.0
 

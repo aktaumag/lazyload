@@ -1,15 +1,14 @@
 const runningOnBrowser = typeof window !== "undefined";
 
 const isBot =
-	(runningOnBrowser && !("onscroll" in window)) ||
-	(typeof navigator !== "undefined" &&
-		/(gle|ing|ro)bot|crawl|spider/i.test(navigator.userAgent));
+    (runningOnBrowser && !("onscroll" in window)) ||
+    (typeof navigator !== "undefined" && /(gle|ing|ro)bot|crawl|spider/i.test(navigator.userAgent));
 
-const supportsIntersectionObserver =
-	runningOnBrowser && "IntersectionObserver" in window;
+const supportsIntersectionObserver = runningOnBrowser && "IntersectionObserver" in window;
 
-const supportsClassList =
-	runningOnBrowser && "classList" in document.createElement("p");
+const supportsClassList = runningOnBrowser && "classList" in document.createElement("p");
+
+const isHiDpi = runningOnBrowser && window.devicePixelRatio > 1;
 
 const defaultSettings = {
     elements_selector: "img",
@@ -20,7 +19,11 @@ const defaultSettings = {
     data_srcset: "srcset",
     data_sizes: "sizes",
     data_bg: "bg",
+    data_bg_hidpi: "bg-hidpi",
+    data_bg_multi: "bg-multi",
+    data_bg_multi_hidpi: "bg-multi-hidpi",
     data_poster: "poster",
+    class_applied: "applied",
     class_loading: "loading",
     class_loaded: "loaded",
     class_error: "error",
@@ -28,14 +31,15 @@ const defaultSettings = {
     auto_unobserve: true,
     callback_enter: null,
     callback_exit: null,
-    callback_reveal: null,
+    callback_applied: null,
+    callback_loading: null,
     callback_loaded: null,
     callback_error: null,
     callback_finish: null,
     use_native: false
 };
 
-const getInstanceSettings = customSettings => {
+const getExtendedSettings = customSettings => {
     return Object.assign({}, defaultSettings, customSettings);
 };
 
@@ -72,44 +76,92 @@ const autoInitialize = (classObj, options) => {
     }
 };
 
+const statusObserved = "observed";
+const statusApplied = "applied";
+const statusLoading = "loading";
+const statusLoaded = "loaded";
+const statusError = "error";
+const statusNative = "native";
+
 const dataPrefix = "data-";
-const processedDataName = "was-processed";
+const statusDataName = "ll-status";
 const timeoutDataName = "ll-timeout";
-const trueString = "true";
 
 const getData = (element, attribute) => {
-	return element.getAttribute(dataPrefix + attribute);
+    return element.getAttribute(dataPrefix + attribute);
 };
 
 const setData = (element, attribute, value) => {
-	var attrName = dataPrefix + attribute;
-	if (value === null) {
-		element.removeAttribute(attrName);
-		return;
-	}
-	element.setAttribute(attrName, value);
+    var attrName = dataPrefix + attribute;
+    if (value === null) {
+        element.removeAttribute(attrName);
+        return;
+    }
+    element.setAttribute(attrName, value);
 };
 
-const resetWasProcessedData = element =>
-	setData(element, processedDataName, null);
+const resetStatus = element => setData(element, statusDataName, null);
 
-const setWasProcessedData = element =>
-	setData(element, processedDataName, trueString);
+const setStatus = (element, status) => setData(element, statusDataName, status);
 
-const getWasProcessedData = element =>
-	getData(element, processedDataName) === trueString;
+const hasAnyStatus = element => getData(element, statusDataName) !== null;
 
-const setTimeoutData = (element, value) =>
-	setData(element, timeoutDataName, value);
+const hasStatusObserved = element => getData(element, statusDataName) === statusObserved;
+
+const hasStatusError = element => getData(element, statusDataName) === statusError;
+
+const setTimeoutData = (element, value) => setData(element, timeoutDataName, value);
 
 const getTimeoutData = element => getData(element, timeoutDataName);
 
-const purgeProcessedElements = elements => {
-	return elements.filter(element => !getWasProcessedData(element));
+const safeCallback = (callback, arg1, arg2, arg3) => {
+	if (!callback) {
+		return;
+	}
+
+	if (arg3 !== undefined) {
+		callback(arg1, arg2, arg3);
+		return;
+	}
+	if (arg2 !== undefined) {
+		callback(arg1, arg2);
+		return;
+	}
+	callback(arg1);
 };
 
-const purgeOneElement = (elements, elementToPurge) => {
-	return elements.filter(element => element !== elementToPurge);
+const addClass = (element, className) => {
+	if (supportsClassList) {
+		element.classList.add(className);
+		return;
+	}
+	element.className += (element.className ? " " : "") + className;
+};
+
+const removeClass = (element, className) => {
+	if (supportsClassList) {
+		element.classList.remove(className);
+		return;
+	}
+	element.className = element.className.
+		replace(new RegExp("(^|\\s+)" + className + "(\\s+|$)"), " ").
+		replace(/^\s+/, "").
+		replace(/\s+$/, "");
+};
+
+const addTempImage = element => {
+    element.llTempImage = document.createElement("img");
+};
+
+const deleteTempImage = element => {
+    delete element.llTempImage;
+};
+
+const getTempImage = element => element.llTempImage;
+
+const increaseLoadingCount = instance => {
+    if (!instance) return;
+    instance.loadingCount += 1;
 };
 
 const getSourceTags = parentTag => {
@@ -162,76 +214,71 @@ const setSourcesVideo = (element, settings) => {
     element.load();
 };
 
-const setSourcesBgImage = (element, settings) => {
-    const srcDataValue = getData(element, settings.data_src);
-    const bgDataValue = getData(element, settings.data_bg);
-
-    if (srcDataValue) {
-        element.style.backgroundImage = `url("${srcDataValue}")`;
-    }
-
-    if (bgDataValue) {
-        element.style.backgroundImage = bgDataValue;
-    }
-};
-
 const setSourcesFunctions = {
     IMG: setSourcesImg,
     IFRAME: setSourcesIframe,
     VIDEO: setSourcesVideo
 };
 
-const setSources = (element, instance) => {
-    const settings = instance._settings;
-    const tagName = element.tagName;
-    const setSourcesFunction = setSourcesFunctions[tagName];
-    if (setSourcesFunction) {
-        setSourcesFunction(element, settings);
-        instance.loadingCount += 1;
-        instance._elements = purgeOneElement(instance._elements, element);
-        return;
-    }
-    setSourcesBgImage(element, settings);
+const setSources = (element, settings, instance) => {
+    const setSourcesFunction = setSourcesFunctions[element.tagName];
+    if (!setSourcesFunction) return;
+    setSourcesFunction(element, settings);
+    // Annotate and notify loading
+    increaseLoadingCount(instance);
+    addClass(element, settings.class_loading);
+    setStatus(element, statusLoading);
+    safeCallback(settings.callback_loading, element, instance);
+    safeCallback(settings.callback_reveal, element, instance); // <== DEPRECATED
 };
 
-const addClass = (element, className) => {
-	if (supportsClassList) {
-		element.classList.add(className);
-		return;
-	}
-	element.className += (element.className ? " " : "") + className;
+const setBackground = (element, settings, instance) => {
+    const bg1xValue = getData(element, settings.data_bg);
+    const bgHiDpiValue = getData(element, settings.data_bg_hidpi);
+    const bgDataValue = isHiDpi && bgHiDpiValue ? bgHiDpiValue : bg1xValue;
+    if (!bgDataValue) return;
+    element.style.backgroundImage = `url("${bgDataValue}")`;
+    getTempImage(element).setAttribute("src", bgDataValue);
+    // Annotate and notify loading
+    increaseLoadingCount(instance);
+    addClass(element, settings.class_loading);
+    setStatus(element, statusLoading);
+    safeCallback(settings.callback_loading, element, instance);
+    safeCallback(settings.callback_reveal, element, instance); // <== DEPRECATED
 };
 
-const removeClass = (element, className) => {
-	if (supportsClassList) {
-		element.classList.remove(className);
-		return;
-	}
-	element.className = element.className.
-		replace(new RegExp("(^|\\s+)" + className + "(\\s+|$)"), " ").
-		replace(/^\s+/, "").
-		replace(/\s+$/, "");
-};
-
-const safeCallback = (callback, arg1, arg2, arg3) => {
-	if (!callback) {
-		return;
-	}
-
-	if (arg3 !== undefined) {
-		callback(arg1, arg2, arg3);
-		return;
-	}
-	if (arg2 !== undefined) {
-		callback(arg1, arg2);
-		return;
-	}
-	callback(arg1);
+// NOTE: THE TEMP IMAGE TRICK CANNOT BE DONE WITH data-multi-bg
+// BECAUSE INSIDE ITS VALUES MUST BE WRAPPED WITH URL() AND ONE OF THEM
+// COULD BE A GRADIENT BACKGROUND IMAGE
+const setMultiBackground = (element, settings, instance) => {
+    const bg1xValue = getData(element, settings.data_bg_multi);
+    const bgHiDpiValue = getData(element, settings.data_bg_multi_hidpi);
+    const bgDataValue = isHiDpi && bgHiDpiValue ? bgHiDpiValue : bg1xValue;
+    if (!bgDataValue) return;
+    element.style.backgroundImage = bgDataValue;
+    // Annotate and notify applied
+    addClass(element, settings.class_applied);
+    setStatus(element, statusApplied);
+    safeCallback(settings.callback_applied, element, instance);
 };
 
 const genericLoadEventName = "load";
 const mediaLoadEventName = "loadeddata";
 const errorEventName = "error";
+
+const elementsWithLoadEvent = ["IMG", "IFRAME", "VIDEO"];
+
+const hasLoadEvent = element => elementsWithLoadEvent.indexOf(element.tagName) > -1;
+
+const decreaseLoadingCount = (settings, instance) => {
+    if (!instance) return;
+    instance.loadingCount -= 1;
+};
+
+const checkFinish = (settings, instance) => {
+    if (!instance || instance.toLoadCount || instance.loadingCount) return;
+    safeCallback(settings.callback_finish, instance);
+};
 
 const addEventListener = (element, eventName, handler) => {
     element.addEventListener(eventName, handler);
@@ -253,57 +300,85 @@ const removeEventListeners = (element, loadHandler, errorHandler) => {
     removeEventListener(element, errorEventName, errorHandler);
 };
 
-const eventHandler = function(event, success, instance) {
-    var settings = instance._settings;
-    const className = success ? settings.class_loaded : settings.class_error;
-    const callback = success ? settings.callback_loaded : settings.callback_error;
-    const element = event.target;
-
+const doneHandler = (element, settings, instance) => {
+    deleteTempImage(element);
+    decreaseLoadingCount(settings, instance);
     removeClass(element, settings.class_loading);
-    addClass(element, className);
-    safeCallback(callback, element, instance);
-
-    instance.loadingCount -= 1;
-
-    if (instance._elements.length === 0 && instance.loadingCount === 0) {
-        safeCallback(settings.callback_finish, instance);
-    }
 };
 
-const addOneShotEventListeners = (element, instance) => {
-    const loadHandler = event => {
-        eventHandler(event, true, instance);
-        removeEventListeners(element, loadHandler, errorHandler);
-    };
-    const errorHandler = event => {
-        eventHandler(event, false, instance);
-        removeEventListeners(element, loadHandler, errorHandler);
-    };
-    addEventListeners(element, loadHandler, errorHandler);
+const loadHandler = (event, element, settings, instance) => {
+    doneHandler(element, settings, instance);
+    addClass(element, settings.class_loaded);
+    setStatus(element, statusLoaded);
+    safeCallback(settings.callback_loaded, element, instance);
+    checkFinish(settings, instance);
 };
 
-const managedTags = ["IMG", "IFRAME", "VIDEO"];
+const errorHandler = (event, element, settings, instance) => {
+    doneHandler(element, settings, instance);
+    addClass(element, settings.class_error);
+    setStatus(element, statusError);
+    safeCallback(settings.callback_error, element, instance);
+    checkFinish(settings, instance);
+};
 
-const revealAndUnobserve = (element, instance) => {
-    var observer = instance._observer;
-    revealElement(element, instance);
+const addOneShotEventListeners = (element, settings, instance) => {
+    const elementToListenTo = getTempImage(element) || element;
+
+    const _loadHandler = event => {
+        loadHandler(event, element, settings, instance);
+        removeEventListeners(elementToListenTo, _loadHandler, _errorHandler);
+    };
+    const _errorHandler = event => {
+        errorHandler(event, element, settings, instance);
+        removeEventListeners(elementToListenTo, _loadHandler, _errorHandler);
+    };
+
+    addEventListeners(elementToListenTo, _loadHandler, _errorHandler);
+};
+
+const decreaseToLoadCount = (settings, instance) => {
+    if (!instance) return;
+    instance.toLoadCount -= 1;
+};
+
+const unobserve = (element, instance) => {
+    if (!instance) return;
+    const observer = instance._observer;
     if (observer && instance._settings.auto_unobserve) {
         observer.unobserve(element);
     }
 };
 
-const revealElement = (element, instance, force) => {
-    var settings = instance._settings;
-    if (!force && getWasProcessedData(element)) {
-        return; // element has already been processed and force wasn't true
+const loadBackground = (element, settings, instance) => {
+    addTempImage(element);
+    addOneShotEventListeners(element, settings, instance);
+    setBackground(element, settings, instance);
+    setMultiBackground(element, settings, instance);
+};
+
+const loadRegular = (element, settings, instance) => {
+    addOneShotEventListeners(element, settings, instance);
+    setSources(element, settings, instance);
+};
+
+const load = (element, settings, instance) => {
+    if (hasLoadEvent(element)) {
+        loadRegular(element, settings, instance);
+    } else {
+        loadBackground(element, settings, instance);
     }
-    if (managedTags.indexOf(element.tagName) > -1) {
-        addOneShotEventListeners(element, instance);
-        addClass(element, settings.class_loading);
-    }
-    setSources(element, instance);
-    setWasProcessedData(element);
-    safeCallback(settings.callback_reveal, element, instance);
+    decreaseToLoadCount(settings, instance);
+    unobserve(element, instance);
+    checkFinish(settings, instance);
+};
+
+const loadNative = (element, settings, instance) => {
+    addOneShotEventListeners(element, settings, instance);
+    setSources(element, settings, instance);
+    decreaseToLoadCount(settings, instance);
+    setStatus(element, statusNative);
+    checkFinish(settings, instance);
 };
 
 const cancelDelayLoad = element => {
@@ -315,14 +390,14 @@ const cancelDelayLoad = element => {
     setTimeoutData(element, null);
 };
 
-const delayLoad = (element, instance) => {
-    var loadDelay = instance._settings.load_delay;
-    var timeoutId = getTimeoutData(element);
+const delayLoad = (element, settings, instance) => {
+    const loadDelay = settings.load_delay;
+    let timeoutId = getTimeoutData(element);
     if (timeoutId) {
         return; // do nothing if timeout already set
     }
     timeoutId = setTimeout(function() {
-        revealAndUnobserve(element, instance);
+        load(element, settings, instance);
         cancelDelayLoad(element);
     }, loadDelay);
     setTimeoutData(element, timeoutId);
@@ -332,10 +407,10 @@ const onEnter = (element, entry, instance) => {
     const settings = instance._settings;
     safeCallback(settings.callback_enter, element, entry, instance);
     if (!settings.load_delay) {
-        revealAndUnobserve(element, instance);
+        load(element, settings, instance);
         return;
     }
-    delayLoad(element, instance);
+    delayLoad(element, settings, instance);
 };
 
 const onExit = (element, entry, instance) => {
@@ -347,6 +422,23 @@ const onExit = (element, entry, instance) => {
     cancelDelayLoad(element);
 };
 
+const nativeLazyTags = ["IMG", "IFRAME"];
+const loadingString = "loading";
+
+const shouldUseNative = settings =>
+    settings.use_native && loadingString in HTMLImageElement.prototype;
+
+const loadAllNative = (elements, settings, instance) => {
+    elements.forEach(element => {
+        if (nativeLazyTags.indexOf(element.tagName) === -1) {
+            return;
+        }
+        element.setAttribute(loadingString, "lazy");
+        loadNative(element, settings, instance);
+    });
+    instance.toLoadCount = 0;
+};
+
 const isIntersecting = entry => entry.isIntersecting || entry.intersectionRatio > 0;
 
 const getObserverSettings = settings => ({
@@ -354,9 +446,25 @@ const getObserverSettings = settings => ({
     rootMargin: settings.thresholds || settings.threshold + "px"
 });
 
+const resetObserver = observer => {
+    observer.disconnect();
+};
+
+const observeElements = (observer, elements) => {
+    elements.forEach(element => {
+        observer.observe(element);
+        setStatus(element, statusObserved);
+    });
+};
+
+const updateObserver = (observer, elementsToObserve) => {
+    resetObserver(observer);
+    observeElements(observer, elementsToObserve);
+};
+
 const setObserver = instance => {
-    if (!supportsIntersectionObserver) {
-        return false;
+    if (!supportsIntersectionObserver || shouldUseNative(instance._settings)) {
+        return;
     }
     instance._observer = new IntersectionObserver(entries => {
         entries.forEach(entry =>
@@ -365,37 +473,28 @@ const setObserver = instance => {
                 : onExit(entry.target, entry, instance)
         );
     }, getObserverSettings(instance._settings));
-    return true;
 };
 
-const nativeLazyTags = ["IMG", "IFRAME"];
+const toArray = nodeSet => Array.prototype.slice.call(nodeSet);
 
-const shouldUseNative = settings =>
-	settings.use_native && "loading" in HTMLImageElement.prototype;
+const queryElements = settings =>
+    settings.container.querySelectorAll(settings.elements_selector);
 
-const loadAllNative = instance => {
-	instance._elements.forEach(element => {
-		if (nativeLazyTags.indexOf(element.tagName) === -1) {
-			return;
-		}
-		element.setAttribute("loading", "lazy");
-		revealElement(element, instance);
-	});
-};
+const isToManage = element => !hasAnyStatus(element) || hasStatusObserved(element);
+const excludeManagedElements = elements => toArray(elements).filter(isToManage);
 
-const queryElements = settings => settings.container.querySelectorAll(settings.elements_selector);
+const hasError = element => hasStatusError(element);
+const filterErrorElements = elements => toArray(elements).filter(hasError);
 
-const nodeSetToArray = nodeSet => Array.prototype.slice.call(nodeSet);
-
-const getElements = (elements, settings) =>
-    purgeProcessedElements(nodeSetToArray(elements || queryElements(settings)));
+const getElementsToLoad = (elements, settings) =>
+    excludeManagedElements(elements || queryElements(settings));
 
 const retryLazyLoad = instance => {
-    var settings = instance._settings;
-    var errorElements = settings.container.querySelectorAll("." + settings.class_error);
-    nodeSetToArray(errorElements).forEach(element => {
+    const settings = instance._settings;
+    const errorElements = filterErrorElements(queryElements(settings));
+    errorElements.forEach(element => {
         removeClass(element, settings.class_error);
-        resetWasProcessedData(element);
+        resetStatus(element);
     });
     instance.update();
 };
@@ -410,50 +509,59 @@ const setOnlineCheck = instance => {
 };
 
 const LazyLoad = function(customSettings, elements) {
-    this._settings = getInstanceSettings(customSettings);
+    this._settings = getExtendedSettings(customSettings);
     this.loadingCount = 0;
     setObserver(this);
-    this.update(elements);
     setOnlineCheck(this);
+    this.update(elements);
 };
 
 LazyLoad.prototype = {
-    update: function(elements) {
-        var settings = this._settings;
-        this._elements = getElements(elements, settings);
-        if (isBot || !this._observer) {
-            this.loadAll();
+    update: function(givenNodeset) {
+        const settings = this._settings;
+        const elementsToLoad = getElementsToLoad(givenNodeset, settings);
+        this.toLoadCount = elementsToLoad.length;
+
+        if (isBot || !supportsIntersectionObserver) {
+            this.loadAll(elementsToLoad);
             return;
         }
         if (shouldUseNative(settings)) {
-            loadAllNative(this);
-            this._elements = getElements(elements, settings);
+            loadAllNative(elementsToLoad, settings, this);
+            return;
         }
-        this._elements.forEach(element => {
-            this._observer.observe(element);
-        });
+
+        updateObserver(this._observer, elementsToLoad);
     },
 
     destroy: function() {
+        // Observer
         if (this._observer) {
-            this._elements.forEach(element => {
-                this._observer.unobserve(element);
-            });
-            this._observer = null;
+            this._observer.disconnect();
         }
-        this._elements = null;
-        this._settings = null;
+        delete this._observer;
+        delete this._settings;
+        delete this.loadingCount;
+        delete this.toLoadCount;
     },
 
-    load: function(element, force) {
-        revealElement(element, this, force);
-    },
-
-    loadAll: function() {
-        this._elements.forEach(element => {
-            revealAndUnobserve(element, this);
+    loadAll: function(elements) {
+        const settings = this._settings;
+        const elementsToLoad = getElementsToLoad(elements, settings);
+        elementsToLoad.forEach(element => {
+            load(element, settings, this);
         });
+    },
+
+    // DEPRECATED
+    load: function(element) {
+        load(element, this._settings, this);
     }
+};
+
+LazyLoad.load = (element, customSettings) => {
+    const settings = getExtendedSettings(customSettings);
+    load(element, settings);
 };
 
 /* Automatic instances creation if required (useful for async script loading) */

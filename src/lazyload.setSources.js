@@ -1,5 +1,14 @@
-import { getData } from "./lazyload.data";
-import { purgeOneElement } from "./lazyload.purge";
+import { getData, setStatus } from "./lazyload.data";
+import { statusLoading, statusApplied } from "./lazyload.elementStatus";
+import { safeCallback } from "./lazyload.callback";
+import { addClass } from "./lazyload.class";
+import { getTempImage } from "./lazyload.tempImage";
+import { isHiDpi } from "./lazyload.environment";
+
+export const increaseLoadingCount = instance => {
+    if (!instance) return;
+    instance.loadingCount += 1;
+};
 
 export const getSourceTags = parentTag => {
     let sourceTags = [];
@@ -51,34 +60,50 @@ export const setSourcesVideo = (element, settings) => {
     element.load();
 };
 
-export const setSourcesBgImage = (element, settings) => {
-    const srcDataValue = getData(element, settings.data_src);
-    const bgDataValue = getData(element, settings.data_bg);
-
-    if (srcDataValue) {
-        element.style.backgroundImage = `url("${srcDataValue}")`;
-    }
-
-    if (bgDataValue) {
-        element.style.backgroundImage = bgDataValue;
-    }
-};
-
 const setSourcesFunctions = {
     IMG: setSourcesImg,
     IFRAME: setSourcesIframe,
     VIDEO: setSourcesVideo
 };
 
-export const setSources = (element, instance) => {
-    const settings = instance._settings;
-    const tagName = element.tagName;
-    const setSourcesFunction = setSourcesFunctions[tagName];
-    if (setSourcesFunction) {
-        setSourcesFunction(element, settings);
-        instance.loadingCount += 1;
-        instance._elements = purgeOneElement(instance._elements, element);
-        return;
-    }
-    setSourcesBgImage(element, settings);
+export const setSources = (element, settings, instance) => {
+    const setSourcesFunction = setSourcesFunctions[element.tagName];
+    if (!setSourcesFunction) return;
+    setSourcesFunction(element, settings);
+    // Annotate and notify loading
+    increaseLoadingCount(instance);
+    addClass(element, settings.class_loading);
+    setStatus(element, statusLoading);
+    safeCallback(settings.callback_loading, element, instance);
+    safeCallback(settings.callback_reveal, element, instance); // <== DEPRECATED
+};
+
+export const setBackground = (element, settings, instance) => {
+    const bg1xValue = getData(element, settings.data_bg);
+    const bgHiDpiValue = getData(element, settings.data_bg_hidpi);
+    const bgDataValue = isHiDpi && bgHiDpiValue ? bgHiDpiValue : bg1xValue;
+    if (!bgDataValue) return;
+    element.style.backgroundImage = `url("${bgDataValue}")`;
+    getTempImage(element).setAttribute("src", bgDataValue);
+    // Annotate and notify loading
+    increaseLoadingCount(instance);
+    addClass(element, settings.class_loading);
+    setStatus(element, statusLoading);
+    safeCallback(settings.callback_loading, element, instance);
+    safeCallback(settings.callback_reveal, element, instance); // <== DEPRECATED
+};
+
+// NOTE: THE TEMP IMAGE TRICK CANNOT BE DONE WITH data-multi-bg
+// BECAUSE INSIDE ITS VALUES MUST BE WRAPPED WITH URL() AND ONE OF THEM
+// COULD BE A GRADIENT BACKGROUND IMAGE
+export const setMultiBackground = (element, settings, instance) => {
+    const bg1xValue = getData(element, settings.data_bg_multi);
+    const bgHiDpiValue = getData(element, settings.data_bg_multi_hidpi);
+    const bgDataValue = isHiDpi && bgHiDpiValue ? bgHiDpiValue : bg1xValue;
+    if (!bgDataValue) return;
+    element.style.backgroundImage = bgDataValue;
+    // Annotate and notify applied
+    addClass(element, settings.class_applied);
+    setStatus(element, statusApplied);
+    safeCallback(settings.callback_applied, element, instance);
 };
